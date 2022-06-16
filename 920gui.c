@@ -660,6 +660,7 @@ gint idleMain()
 		}		
 // **** MJB else if (pipeIO)
 // **** MJB else if anything else 
+// qaz
 		
 	    break;
 	    
