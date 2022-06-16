@@ -8,6 +8,9 @@
 #define BLINKTIME 160
 #define BLINKREPEAT 32
 
+#define LAMP_ON 1
+#define LAMP_OFF 0
+
 #define STEPTIME 160
 #define STEPREPEAT 4
 
@@ -18,19 +21,23 @@
 #define BUTTON_STOP 27
 #define BUTTON_RSRT 25
 
+
 // GPIO LED pins
+
+
 #define LED_JUMP 15
 #define LED_STOP 18
 #define LED_RSET 23
 #define LED_RSRT 24
 
-#define LED_REDY 22 // ***MJB power indicator- needs initrc job on startup & shutdown
-#define LED_ONON 26 // ***MJB doesn't do much - blinks on program start, stays on, off on exit
+#define LED_REDY 22 // power indicator- needs set on/off by rc0.d job on startup & shutdown
+#define LED_ONON 26 // doesn't do much - blinks on program start then stays on, blinks again & off on exit
 
 
 //GTK button brightness
 #define BUTTON_DIM 0.4
 #define BUTTON_ON 1
+
 
 // I2C Busses & banks
 #define I2C_BankA 0

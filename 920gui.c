@@ -92,6 +92,7 @@
 /**********************************************/
 
 int      seconds = 0;
+
 guint    timerId = 0;
 gboolean GPIO = FALSE;
 gboolean pressed = FALSE;
@@ -112,6 +113,9 @@ uint32_t randLoop = 0;
 uint32_t blinkenLoop = 0; 
 uint32_t jumpAddress = 0;
 
+uint64_t timeNow = 0;
+uint64_t savedTime = 0;
+
 int FSMState = STATE_IDLE; 
 int buttonJump = HIGH;
 int buttonStop = HIGH;
@@ -131,6 +135,10 @@ union
     uint16_t regInt16[2]; // 2x 16 bit - not sure if needed
     uint8_t  regByte[4];  // 4x Bytes for copying to I2C byte regs
 } regVals;
+
+GtkWidget *window;
+GtkBuilder *bld = NULL;
+GError *error = NULL;
 
 /**********************************************/
 //
@@ -251,6 +259,7 @@ void clearUp();
 void I2CInitialise();
 
 
+
 /**********************************************/
 //
 // GTK / Glade functions
@@ -264,12 +273,26 @@ void btnJumpClicked(GtkWidget *widget,
 		       __attribute__((unused)) gpointer   data)
 {
     jumpAddress = gtk_spin_button_get_value_as_int (spinAddress);
+    
+    if (jumpAddress == 0) // no value in GUI
+    {
+	// read switch values 
+	regVals.regInt32 = 0;
+#ifdef PI400
+	regVals.regByte[0] = read_port (I2C_Bus1, I2C_BankA);
+	regVals.regByte[1] = read_port (I2C_Bus1, I2C_BankB);
+#else
+	regVals.regByte[0] = read_port (I2C_Bus2, I2C_BankA);
+	regVals.regByte[1] = read_port (I2C_Bus2, I2C_BankB);	
+	regVals.regByte[2] = read_port (I2C_Bus3, I2C_BankA);
+#endif
+    }
+    
     g_print("Jump addr = %d\n", jumpAddress);
     if (jumpAddress == 8)
     {
 	regVals.regInt32 = 0;
-	blinkenLoop = 0;
-	
+	blinkenLoop = 0;	
 
 	if (timerId == 0)
 	{	
@@ -383,6 +406,7 @@ void btnStopClicked(__attribute__((unused)) GtkWidget *widget,
 #endif
 
 	// g_print("Switches = 0x%X\n",regVals.regInt32);
+	
 	//write I2C Regs
 	write_port(I2C_Bus0,I2C_BankA, regVals.regByte[0]);
 	write_port(I2C_Bus0,I2C_BankB, regVals.regByte[1]);
@@ -402,9 +426,12 @@ void btnStopClicked(__attribute__((unused)) GtkWidget *widget,
     }
 }
 
+
+
+
 /**********************************************/
 //
-// 920 functions
+// 920 GPIO/I2C I/O functions
 //
 /**********************************************/  
 
@@ -568,7 +595,7 @@ void I2CInitialise (void)
 
     // ****************   Init GPIO
     
-    // Set the GPIO LED pins to be an output
+    // Set the GPIO LED pins to be an output once PJW sorts out logic
     //bcm2835_gpio_fsel(LED_JUMP, BCM2835_GPIO_FSEL_OUTP);
     //bcm2835_gpio_fsel(LED_STOP, BCM2835_GPIO_FSEL_OUTP);
     //bcm2835_gpio_fsel(LED_RSET, BCM2835_GPIO_FSEL_OUTP);
@@ -593,12 +620,12 @@ void I2CInitialise (void)
 //++++++++++++++++++++++++++++++++++++++++ Idle Main
 gint idleMain()
 {
-    buttonJump = bcm2835_gpio_lev(BUTTON_JUMP);
+    timeNow = bcm2835_st_read();
+    
+    buttonJump = bcm2835_gpio_lev(BUTTON_JUMP); // actually a 920 flick switch
     buttonStop = bcm2835_gpio_lev(BUTTON_STOP);
     buttonRset = bcm2835_gpio_lev(BUTTON_RSET);
     buttonRsrt = bcm2835_gpio_lev(BUTTON_RSRT);
-    
-    //g_print("qaz\n");
 
     switch (FSMState)
     {
@@ -626,16 +653,22 @@ gint idleMain()
 		    g_print("physical Restart pressed");
 		    FSMState = STATE_RSRT;
 		}
-		
-		//...... insert other action checks here - pipes etc
-		// update register displays
+		else if (timeNow - savedTime > 100000) // microseconds, 0.1/sec
+		{
+			savedTime = timeNow;
+			//update regvals displayed
+		}		
+// **** MJB else if (pipeIO)
+// **** MJB else if anything else 
 		
 	    break;
 	    
 	case STATE_RSET :
 		
 		printf("doing reset\n");
+		
 		btnResetClicked ( resetBtn, NULL);
+		
 		FSMState = STATE_IDLE;
 		
 	    break;    
@@ -643,7 +676,9 @@ gint idleMain()
 	case STATE_RSRT :
 		
 		printf("doing restart\n");
+		
 		btnResetClicked ( resetBtn, NULL);
+		
 		FSMState = STATE_IDLE;
 		
 	    break;    
@@ -792,6 +827,7 @@ gboolean stepLights(__attribute__((unused)) gpointer userData)
 
 
 //++++++++++++++++++++++++++++ windowDelete
+
 gboolean windowDelete(__attribute__((unused)) GtkWidget *widget, 
 		      __attribute__((unused)) GdkEvent  *event,
 		      __attribute__((unused)) gpointer   data)
@@ -1212,7 +1248,7 @@ void emulate () {
 	    exitCode = EXIT_DYNSTOP;
 	    break;
 	  }
-// ***MJB put in 10 microsecond delay for "proper" emulation 
+// ***MJB AJH suggests put in 10 microsecond delay for "proper" emulation 
 
     } // end while fetching and decoding instructions
 
@@ -1726,43 +1762,11 @@ void putTTYOchar (char ch)
 //***MJB redirect to pipe for screen display  
 }
 
+//++++++++++++++++++++++++++++ more_gtk_init
 
-/**********************************************/
-//
-//                     MAIN
-//
-/**********************************************/   
-
-int main ( int argc, char **argv) {
-    
-    
-
-    GtkWidget *window;
-    GtkBuilder *bld = NULL;
-    GError *error = NULL;
-#ifdef PI400
-    printf("PI400 test\n");
-#endif
-    printf("Version %s %s\n", __DATE__, __TIME__);
-    
-    // Init GTK windowing 
-    gtk_init (&argc , &argv); 
-
-    // if -g / -G option input, no GPIO buttons/lights
-    // insert code here !!!!!
-    GPIO = FALSE;
-    
-    // create trap for console Ctrl-C
-    // insert code here !!!!!
-
-    if (!bcm2835_init())
-    {	
-	printf("BMC2835 init failed\n");
-	return -1 ;
-    }
-    
-    // Init all the GPIO & I2C registers and pins for 920 lamps & switches
-    if (GPIO) I2CInitialise();
+// just a load of linear code that was getting in the way in Main
+int more_gtk_init ( void )
+{   
     
     // Load GTK Glade gui
     bld = gtk_builder_new();
@@ -1784,7 +1788,7 @@ int main ( int argc, char **argv) {
     resumeBtn = GTK_WIDGET (gtk_builder_get_object (bld,"btnResume"));
     stopBtn = GTK_WIDGET (gtk_builder_get_object (bld,"btnStop"));
     
-//***MJB create global variables to hold pointers to file dialog gadgets
+//***MJB add global variables to hold pointers to file dialog gadgets, set defauts
     
     // Set button colours from CSS
     GdkDisplay *display = gdk_display_get_default();
@@ -1806,21 +1810,73 @@ int main ( int argc, char **argv) {
 
     // individual Widget callbacks are set in Glade "Signals" panel
     // add additional non-Glade signal callbacks
+    
     g_signal_connect(window, "delete_event", G_CALLBACK(windowDelete), NULL);
     g_signal_connect(window, "key_press_event", G_CALLBACK(keyPressGui), NULL);
     gtk_builder_connect_signals(bld,NULL);
+    
+    return EXIT_SUCCESS;
+}
+
+/**********************************************/
+//
+//                     MAIN
+//
+/**********************************************/   
+
+int main ( int argc, char **argv) {
+    
+#ifdef PI400
+    printf("PI400 test\n");
+#endif
+    printf("Version %s %s\n", __DATE__, __TIME__);
+    
+    // Init GTK windowing 
+    gtk_init (&argc , &argv); 
+
+    // if -g / -G option input, meaning no GPIO buttons/lights
+
+    GPIO = FALSE;
+    
+    // create trap for console Ctrl-C
+    // insert code here !!!!!
+
+    if (! bcm2835_init())
+    {	
+	printf("BMC2835 init failed\n");
+	return EXIT_FAILURE ;
+    }
  
-    // Add GPIO loop for GTK Idle
+    // Init all the GPIO & I2C registers and pins for 920 lamps & switches
+    if (GPIO) I2CInitialise();
+    
+    // Show 920 ON lamp (make switchable with GPIO later)
+    blinkGPIO( LED_ONON, 50, 3); 
+    bcm2835_gpio_write(LED_ONON, HIGH);  
+    
+    // set up all the GTK globals for later use
+    if (! more_gtk_init() )
+    {	
+	printf("local gtk init failed\n");
+	return EXIT_FAILURE ;
+    }
+   
+    // Add GPIO switches loop for GTK Idle
     if (GPIO) idleMainRef = g_idle_add( idleMain, NULL ); 
  
-//***MJB create Pipes
-//***MJB create Thread
+//***MJB create Pipes for EMU comms
+//***MJB create EMU Thread
 
-   
 
     gtk_widget_show_all (window);
     gtk_main ();
     // Return to here means Window has been closed
+    
+    // Turn Off 920 ON lamp (make switchable)
+    blinkGPIO( LED_ONON, 50, 3); 
+    bcm2835_gpio_write(LED_ONON, LOW);  
+ 
+    
     // All lamps off
     // BCM & I2C close
     if (GPIO) clearUp();
